@@ -18,11 +18,13 @@ trap 'rm -rf "$W"' EXIT
 mkdir -p "$SITE/$POOL"
 SITE=$(cd "$SITE" && pwd)
 
-# 0 on 200, 1 on 404 (first publish, or a suite never published), else die.
-# The query string dodges the Pages CDN cache right after a deploy.
+# 0 on 200, 1 on 404, else die; a nonzero curl exit (e.g. 18, truncated body
+# that still reported 200) dies too. The query string dodges the Pages CDN
+# cache right after a deploy.
 fetch() {
-    local code
-    code=$(curl -sS -o "$2" -w '%{http_code}' "$1?t=$(date +%s%N)")
+    local code rc=0
+    code=$(curl -sS -o "$2" -w '%{http_code}' "$1?t=$(date +%s%N)") || rc=$?
+    [ "$rc" = 0 ] || { echo "GET $1: curl exit $rc" >&2; exit 1; }
     case $code in
     200) return 0 ;;
     404) return 1 ;;
@@ -30,17 +32,30 @@ fetch() {
     esac
 }
 
+# Only a site that does not exist yet may read as empty. Once the keyring is
+# live, a missing Packages means a wrong BASE or a broken deploy, and treating
+# it as empty would drop (and sign away) a whole suite.
+if fetch "$BASE/schema-init-archive-keyring.gpg" "$W/probe"; then live=1; else live=0; fi
+echo "live site: $live"
+
 # Suite membership: an empty marker file $W/<suite>/<deb> per package.
 for s in $SUITES; do
     mkdir -p "$W/$s"
     for a in $ARCHES; do
-        fetch "$BASE/dists/$s/main/binary-$a/Packages" "$W/Packages" || continue
-        sed -n 's/^Filename: //p' "$W/Packages" | while read -r f; do
+        if ! fetch "$BASE/dists/$s/main/binary-$a/Packages" "$W/Packages"; then
+            [ "$live" = 0 ] || { echo "live site has no $s/$a Packages" >&2; exit 1; }
+            continue
+        fi
+        awk '/^Filename: /{f=$2} /^SHA256: /{h=$2} /^$/{if(f!="")print f, h; f=h=""} END{if(f!="")print f, h}' \
+            "$W/Packages" > "$W/list"
+        while read -r f h; do
             b=${f##*/}
             [[ $f == "$POOL/$b" && $b =~ $DEB_RE ]] || { echo "bad Filename in live $s/$a: $f" >&2; exit 1; }
+            [[ $h =~ ^[0-9a-f]{64}$ ]] || { echo "no SHA256 for $f in live $s/$a" >&2; exit 1; }
             [ -f "$SITE/$f" ] || fetch "$BASE/$f" "$SITE/$f" || { echo "live $s/$a lists missing $f" >&2; exit 1; }
+            echo "$h  $SITE/$f" | sha256sum -c --quiet || { echo "sha256 mismatch: $f" >&2; exit 1; }
             : > "$W/$s/$b"
-        done
+        done < "$W/list"
     done
 done
 
@@ -69,7 +84,8 @@ for a in $ARCHES; do
     for m in "$W"/dev/*_"$a".deb; do
         [ -e "$m" ] || continue
         b=${m##*/}
-        echo "$(dpkg-deb -f "$SITE/$POOL/$b" Version) $b"
+        v=$(dpkg-deb -f "$SITE/$POOL/$b" Version) && [ -n "$v" ] || { echo "no Version in $b" >&2; exit 1; }
+        echo "$v $b"
     done | newest_first | tail -n +$((KEEP_DEV + 1)) | while read -r b; do
         echo "prune dev: $b"
         rm "$W/dev/$b"

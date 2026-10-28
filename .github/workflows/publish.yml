@@ -1,0 +1,74 @@
+name: publish
+
+on:
+  repository_dispatch:
+    types: [pi-debs]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: ajax80/schema-init deb.yml run id
+        required: true
+      channel:
+        description: suite to add the debs to
+        type: choice
+        options: [dev, stable]
+        default: dev
+
+# Each publish rebuilds the site from the live one; two at once would drop debs.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  pages: write
+  id-token: write
+  contents: read
+  actions: read
+
+env:
+  BASE_URL: https://ajax80.github.io/schema-init-apt
+  SIGNING_FPR: 3ABC17E595143A99E5F2424662CB71B0B40C9EF8
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: inputs
+        env:
+          IN_RUN_ID: ${{ github.event.client_payload.run_id || inputs.run_id }}
+          IN_CHANNEL: ${{ github.event.client_payload.channel || inputs.channel }}
+        run: |
+          [[ $IN_RUN_ID =~ ^[0-9]+$ ]] || { echo "bad run_id: $IN_RUN_ID"; exit 1; }
+          case $IN_CHANNEL in dev | stable) ;; *) echo "bad channel: $IN_CHANNEL"; exit 1 ;; esac
+          echo "RUN_ID=$IN_RUN_ID" >> "$GITHUB_ENV"
+          echo "CHANNEL=$IN_CHANNEL" >> "$GITHUB_ENV"
+      - name: tools
+        run: sudo apt-get update && sudo apt-get install -y apt-utils gpgv
+      - name: download debs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$RUN_ID" -R ajax80/schema-init -n "debs-$CHANNEL" -D new && ls -l new
+      - name: import signing key
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
+      - name: build repo
+        env:
+          APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
+        run: |
+          bash tools/build-repo.sh "$CHANNEL" new site "$BASE_URL"
+          cp README.md site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

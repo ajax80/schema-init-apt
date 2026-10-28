@@ -36,3 +36,6 @@ sudo schema-pi enable    # Raspberry Pi: opt in to schema-init as PID 1
 ```
 
 Installing the package never changes PID 1; `schema-pi disable` reverts.
+
+Publishes run one at a time. A queued publish that a newer one cancelled is
+recovered by re-dispatching it: `gh workflow run publish.yml -f run_id=<deb.yml run id> -f channel=<dev|stable>`.

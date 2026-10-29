@@ -81,6 +81,15 @@ serve "$T/s3"
 mkdir "$T/n4"; printf 'not a deb' > "$T/n4/schema-init_0.4.20-1.1500.20261028gitbad_amd64.deb"
 if build dev "$T/n4" "$T/s7"; then bad "garbage deb accepted"; elif grep -q 'no Version in' "$T/out"; then ok "dpkg-deb failure in prune is fatal"; else cat "$T/out"; bad "garbage: wrong failure"; fi
 
+# 7. DROP removes a dev build from the index and the pool, keeps the rest
+for h in 1111111 2222222; do mk "0.4.20-1.1600.20261028git$h" amd64 "$T/n5_$h"; done
+serve "$T/s3"; build dev "$T/n5_1111111" "$T/s8"; serve "$T/s8"; build dev "$T/n5_2222222" "$T/s9"; serve "$T/s9"
+if DROP=1111111 build dev "$T/n3" "$T/s10" && ! grep -q git1111111 "$T/s10/dists/dev/main/binary-amd64/Packages" \
+    && grep -q git2222222 "$T/s10/dists/dev/main/binary-amd64/Packages" && ! ls "$T"/s10/pool/main/s/schema-init/*git1111111* >/dev/null 2>&1; then
+    ok "DROP removes one dev build"; else cat "$T/out"; bad "DROP"; fi
+# 8. a DROP hash matching nothing is fatal (typo guard)
+if DROP=fffffff build dev "$T/n3" "$T/s11"; then bad "unmatched DROP accepted"; elif grep -q 'matches no dev deb' "$T/out"; then ok "unmatched DROP is fatal"; else cat "$T/out"; bad "unmatched DROP: wrong failure"; fi
+
 kill "$P"
 [ "$fails" = 0 ] && echo "test-build-repo: all ok"
 exit $fails

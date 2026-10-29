@@ -3,7 +3,8 @@
 # dists/{stable,dev}. Pages deploys replace the site, so every deb still
 # listed live is fetched back first.
 # usage: build-repo.sh CHANNEL NEW_DEB_DIR SITE_DIR BASE_URL
-# env: SIGNING_FPR, APT_SIGNING_PASSPHRASE (secret key already imported)
+# env: SIGNING_FPR, APT_SIGNING_PASSPHRASE (secret key already imported),
+#      DROP (optional, comma-separated git hashes to remove from dev)
 set -euo pipefail
 CHANNEL=$1 NEW=$2 SITE=$3 BASE=$4
 case $CHANNEL in stable | dev) ;; *) echo "bad channel: $CHANNEL" >&2; exit 2 ;; esac
@@ -64,6 +65,21 @@ for d in "$NEW"/*.deb; do
     [[ $b =~ $DEB_RE ]] || { echo "bad new deb name: $b" >&2; exit 1; }
     cp "$d" "$SITE/$POOL/$b"
     : > "$W/$CHANNEL/$b"
+done
+
+# A dev build that outranks master (a hand-published branch build counts its
+# own branch's commits) would pin dev users and get master builds pruned.
+IFS=, read -ra drops <<< "${DROP:-}"
+for h in "${drops[@]}"; do
+    [[ $h =~ ^[0-9a-f]{7,40}$ ]] || { echo "bad DROP hash: $h" >&2; exit 1; }
+    n=0
+    for m in "$W"/dev/*git"$h"_*.deb; do
+        [ -e "$m" ] || continue
+        echo "drop dev: ${m##*/}"
+        rm "$m"
+        n=$((n + 1))
+    done
+    [ "$n" -gt 0 ] || { echo "DROP $h matches no dev deb" >&2; exit 1; }
 done
 
 # Newest first by dpkg version order; stable is never pruned.

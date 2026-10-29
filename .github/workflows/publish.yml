@@ -13,6 +13,10 @@ on:
         type: choice
         options: [dev, stable]
         default: dev
+      drop:
+        description: comma-separated git hashes to remove from dev (optional)
+        required: false
+        default: ''
 
 # Each publish rebuilds the site from the live one; two at once would drop debs.
 concurrency:
@@ -42,11 +46,14 @@ jobs:
         env:
           IN_RUN_ID: ${{ github.event.client_payload.run_id || inputs.run_id }}
           IN_CHANNEL: ${{ github.event.client_payload.channel || inputs.channel }}
+          IN_DROP: ${{ inputs.drop }}
         run: |
           [[ $IN_RUN_ID =~ ^[0-9]+$ ]] || { echo "bad run_id: $IN_RUN_ID"; exit 1; }
           case $IN_CHANNEL in dev | stable) ;; *) echo "bad channel: $IN_CHANNEL"; exit 1 ;; esac
           echo "RUN_ID=$IN_RUN_ID" >> "$GITHUB_ENV"
           echo "CHANNEL=$IN_CHANNEL" >> "$GITHUB_ENV"
+          [[ -z $IN_DROP || $IN_DROP =~ ^[0-9a-f]{7,40}(,[0-9a-f]{7,40})*$ ]] || { echo "bad drop: $IN_DROP"; exit 1; }
+          echo "DROP=$IN_DROP" >> "$GITHUB_ENV"
       - name: tools
         run: sudo apt-get update && sudo apt-get install -y apt-utils gpgv
       - name: download debs

@@ -35,7 +35,7 @@ jobs:
   build:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Throwaway keyring under runner.temp, not ~/.gnupg. Set via GITHUB_ENV:
       # the runner context is not available in jobs.<id>.env.
       - name: gnupg home
@@ -70,7 +70,7 @@ jobs:
         run: |
           bash tools/build-repo.sh "$CHANNEL" new site "$BASE_URL"
           cp README.md site/
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -85,4 +85,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
